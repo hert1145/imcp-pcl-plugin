@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>PCL.Plugin.ImcProxy</AssemblyName>
+    <RootNamespace>PCL.Plugin.ImcProxy</RootNamespace>
+    <PclLiteDir Condition="'$(PclLiteDir)' == ''">..\pcl-lite\</PclLiteDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(PclLiteDir)PCL.Plugin.SDK\PCL.Plugin.SDK.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
