@@ -1,7 +1,5 @@
-using System.Text.RegularExpressions;
-using System.Text;
-using System.Net.Http;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
@@ -20,7 +18,6 @@ public sealed class ControlPage
     private readonly TextBlock _status = new() { Text = "正在读取状态…", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
     private readonly TextBlock _hint = new() { Text = "", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), Opacity = 0.75 };
     private readonly StackPanel _settings = new();
-    private readonly TextBox _nodePath = new() { MinWidth = 320, Margin = new Thickness(0, 0, 12, 0) };
     private bool _loaded;
     private TextBox? _configEditor;
     private readonly TextBlock _versionInfo = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 8), Opacity = 0.85 };
@@ -56,26 +53,19 @@ public sealed class ControlPage
         });
         root.Children.Add(new TextBlock
         {
-            Text = "通过 HTTP API 控制 IMCProxy-Free：下载、启动、停止与配置。代理在后台运行，不显示控制台窗口。",
+            Text = "从 GitHub Release 下载 IMCProxy-NextGen-Free（C++ 版），在后台静默运行，通过 HTTP API 控制。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 8, 0, 16),
             Opacity = 0.8,
         });
 
         var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
-        buttons.Children.Add(WithMargin(_context.Ui.CreateButton("下载 / 更新完整版", DownloadAsync, PluginButtonStyle.Highlight)));
-        buttons.Children.Add(WithMargin(_context.Ui.CreateButton("安装依赖并构建", InstallAsync)));
+        buttons.Children.Add(WithMargin(_context.Ui.CreateButton("下载 / 更新", DownloadAsync, PluginButtonStyle.Highlight)));
         buttons.Children.Add(WithMargin(_context.Ui.CreateButton("启动代理", StartAsync)));
         buttons.Children.Add(WithMargin(_context.Ui.CreateButton("停止代理", StopAsync, PluginButtonStyle.Danger)));
         buttons.Children.Add(WithMargin(_context.Ui.CreateButton("刷新状态", RefreshAsync)));
-        buttons.Children.Add(WithMargin(_context.Ui.CreateButton("打开配置文件夹", OpenConfigFolderAsync)));
+        buttons.Children.Add(WithMargin(_context.Ui.CreateButton("打开安装目录", OpenFolderAsync)));
         root.Children.Add(buttons);
-
-        var nodeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
-        nodeRow.Children.Add(new TextBlock { Text = "Node 路径", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) });
-        nodeRow.Children.Add(_nodePath);
-        nodeRow.Children.Add(_context.Ui.CreateButton("保存", SaveNodePathAsync));
-        root.Children.Add(nodeRow);
 
         root.Children.Add(new Border
         {
@@ -85,16 +75,17 @@ public sealed class ControlPage
             Child = _status,
         });
         root.Children.Add(_hint);
+
         root.Children.Add(new TextBlock
         {
-            Text = "IMCProxy-Free 版本与更新",
+            Text = "IMCProxy-NextGen-Free 版本与更新",
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 16, 0, 4),
         });
         root.Children.Add(new TextBlock
         {
-            Text = "检测的是被管理的 IMCProxy-Free 版本，与插件自身版本无关。",
+            Text = "检测的是被管理的代理版本，与插件自身版本无关。",
             Opacity = 0.7,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 4),
@@ -108,30 +99,30 @@ public sealed class ControlPage
 
         root.Children.Add(new TextBlock
         {
-            Text = "配置文件夹",
+            Text = "配置",
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 16, 0, 4),
         });
         root.Children.Add(new TextBlock
         {
-            Text = "config.json、game-account.txt 与 logs/ 都保存在安装目录。",
+            Text = "config.json、账号文件与 logs/ 都保存在安装目录。",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.75,
             Margin = new Thickness(0, 0, 0, 8),
         });
         var folderRow = new WrapPanel();
-        folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("打开文件夹", OpenConfigFolderAsync)));
+        folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("打开文件夹", OpenFolderAsync)));
         folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("重新载入", ReloadConfigAsync)));
         folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("保存 config.json", SaveConfigAsync)));
-        folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("保存并重启代理", SaveAndRestartAsync, PluginButtonStyle.Highlight)));
+        folderRow.Children.Add(WithMargin(_context.Ui.CreateButton("保存并重启", SaveAndRestartAsync, PluginButtonStyle.Highlight)));
         root.Children.Add(folderRow);
 
         var configEditor = new TextBox
         {
             AcceptsReturn = true,
             AcceptsTab = true,
-            Height = 220,
+            Height = 200,
             FontFamily = new FontFamily("Consolas, Microsoft YaHei UI"),
             FontSize = 12,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -144,14 +135,14 @@ public sealed class ControlPage
 
         root.Children.Add(new TextBlock
         {
-            Text = "直接编辑后点保存；端口、上游等改动需要重启代理生效。",
+            Text = "修改端口、上游等需要重启代理生效。",
             Opacity = 0.7,
             Margin = new Thickness(0, 0, 0, 8),
         });
 
         root.Children.Add(new TextBlock
         {
-            Text = "配置",
+            Text = "逐项配置",
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 20, 0, 8),
@@ -160,7 +151,7 @@ public sealed class ControlPage
         var scroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 460,
+            MaxHeight = 420,
             Content = _settings,
         };
         root.Children.Add(scroll);
@@ -169,7 +160,6 @@ public sealed class ControlPage
         {
             if (_loaded) return;
             _loaded = true;
-            await LoadNodePathAsync();
             await LoadConfigTextAsync();
             await RefreshAsync();
         };
@@ -183,34 +173,9 @@ public sealed class ControlPage
         return element;
     }
 
-    private async Task LoadNodePathAsync()
-    {
-        try
-        {
-            var saved = await _context.Settings.GetAsync<string>("nodePath");
-            _nodePath.Text = saved ?? "";
-        }
-        catch
-        {
-        }
-    }
-
-    private async Task SaveNodePathAsync()
-    {
-        await PersistNodePathAsync();
-        _context.Ui.ShowNotification("已保存 Node 路径", PluginNotificationKind.Success);
-    }
-
-    private async Task PersistNodePathAsync()
-    {
-        var value = _nodePath.Text?.Trim() ?? "";
-        _runtime.NodePath = value;
-        await _context.Settings.SetAsync("nodePath", value);
-    }
-
     private async Task DownloadAsync()
     {
-        var confirmed = await _context.Ui.ConfirmAsync("下载 IMCProxy-Free", "将下载完整仓库（含源码）并覆盖本地目录，继续？");
+        var confirmed = await _context.Ui.ConfirmAsync("下载 IMCProxy", "将从 GitHub Release 下载最新的 IMCProxy-NextGen-Free 并覆盖安装目录（保留 config.json 与账号文件），继续？");
         if (!confirmed) return;
 
         var progress = new Progress<PluginDownloadProgress>(p =>
@@ -223,10 +188,10 @@ public sealed class ControlPage
 
         try
         {
-            _hint.Text = "准备下载…";
-            await _runtime.DownloadFullVersionAsync(progress, CancellationToken.None);
-            _hint.Text = "已下载到 " + _runtime.InstallDirectory;
-            _context.Ui.ShowNotification("IMCProxy-Free 下载完成", PluginNotificationKind.Success);
+            _hint.Text = "正在读取最新 release…";
+            await _runtime.DownloadAsync(progress, CancellationToken.None);
+            _hint.Text = "已安装 " + _runtime.InstalledTag + " 到 " + _runtime.InstallDirectory;
+            _context.Ui.ShowNotification("IMCProxy 下载完成：" + _runtime.InstalledTag, PluginNotificationKind.Success);
             await RefreshAsync();
         }
         catch (Exception ex)
@@ -237,34 +202,10 @@ public sealed class ControlPage
         }
     }
 
-    private async Task InstallAsync()
-    {
-        if (!_runtime.HasInstallation())
-        {
-            _context.Ui.ShowNotification("请先下载完整版", PluginNotificationKind.Warning);
-            return;
-        }
-        try
-        {
-            _hint.Text = "正在安装依赖并构建，可能需要几分钟…";
-            await PersistNodePathAsync();
-            await _runtime.InstallDependenciesAsync(CancellationToken.None);
-            _hint.Text = "构建完成，可以启动代理。";
-            _context.Ui.ShowNotification("依赖安装与构建完成", PluginNotificationKind.Success);
-        }
-        catch (Exception ex)
-        {
-            _hint.Text = "安装失败：" + ex.Message;
-            _context.Ui.ShowNotification("安装失败", PluginNotificationKind.Error);
-            _context.Logger.Error("install failed", ex);
-        }
-    }
-
     private async Task StartAsync()
     {
         try
         {
-            await PersistNodePathAsync();
             await _runtime.StartAsync(CancellationToken.None);
             await Task.Delay(1200);
             await RefreshAsync();
@@ -285,11 +226,22 @@ public sealed class ControlPage
         _context.Ui.ShowNotification("已停止代理", PluginNotificationKind.Info);
     }
 
+    private Task OpenFolderAsync()
+    {
+        if (!_runtime.HasInstallation())
+        {
+            _context.Ui.ShowNotification("尚未下载，安装目录不存在", PluginNotificationKind.Warning);
+            return Task.CompletedTask;
+        }
+        _runtime.OpenInstallFolder();
+        return Task.CompletedTask;
+    }
+
     private bool TrySyncApiBaseFromConfig()
     {
         try
         {
-            var configFile = Path.Combine(_runtime.InstallDirectory, "config.json");
+            var configFile = _runtime.ConfigPath;
             if (!File.Exists(configFile)) return false;
             using var document = JsonDocument.Parse(File.ReadAllText(configFile));
             if (!document.RootElement.TryGetProperty("api", out var api)) return false;
@@ -307,19 +259,6 @@ public sealed class ControlPage
         }
     }
 
-    private Task OpenConfigFolderAsync()
-    {
-        if (!Directory.Exists(_runtime.InstallDirectory))
-        {
-            _context.Ui.ShowNotification("尚未下载 IMCProxy-Free，配置文件夹不存在", PluginNotificationKind.Warning);
-            return Task.CompletedTask;
-        }
-        _context.Launcher.OpenPath(_runtime.InstallDirectory);
-        return Task.CompletedTask;
-    }
-
-    private string ConfigFile => Path.Combine(_runtime.InstallDirectory, "config.json");
-
     private async Task ReloadConfigAsync()
     {
         await LoadConfigTextAsync();
@@ -331,13 +270,13 @@ public sealed class ControlPage
         if (_configEditor is null) return;
         try
         {
-            if (!File.Exists(ConfigFile))
+            if (!File.Exists(_runtime.ConfigPath))
             {
                 _configEditor.Text = "{}";
                 _context.Ui.ShowNotification("config.json 尚未生成，先启动一次代理", PluginNotificationKind.Info);
                 return;
             }
-            _configEditor.Text = await File.ReadAllTextAsync(ConfigFile);
+            _configEditor.Text = await File.ReadAllTextAsync(_runtime.ConfigPath);
         }
         catch (Exception ex)
         {
@@ -351,7 +290,7 @@ public sealed class ControlPage
         var content = _configEditor.Text;
         try
         {
-            using var _ = System.Text.Json.JsonDocument.Parse(content);
+            using var _ = JsonDocument.Parse(content);
         }
         catch (Exception ex)
         {
@@ -361,7 +300,7 @@ public sealed class ControlPage
         try
         {
             Directory.CreateDirectory(_runtime.InstallDirectory);
-            await File.WriteAllTextAsync(ConfigFile, content);
+            await File.WriteAllTextAsync(_runtime.ConfigPath, content);
             _context.Ui.ShowNotification("config.json 已保存", PluginNotificationKind.Success);
         }
         catch (Exception ex)
@@ -387,58 +326,28 @@ public sealed class ControlPage
         }
     }
 
-    private const string VersionUrl = "https://raw.githubusercontent.com/HertaTeam/IMCProxy-Free/main/version.json";
-    private const string ChangelogUrl = "https://raw.githubusercontent.com/HertaTeam/IMCProxy-Free/main/src/reverse_proxy/Changelog.ts";
-
     private async Task CheckUpdatesAsync()
     {
-        var local = await ReadLocalVersionAsync();
-        if (string.IsNullOrWhiteSpace(local))
-        {
-            try
-            {
-                var version = await _api.GetAsync("version");
-                local = version["editDate"]?.GetValue<string>() ?? version["version"]?.GetValue<string>() ?? "";
-            }
-            catch
-            {
-            }
-        }
-
-        string remote;
+        var local = _runtime.InstalledTag;
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-            var text = await http.GetStringAsync(VersionUrl);
-            using var document = JsonDocument.Parse(text);
-            remote = document.RootElement.TryGetProperty("editDate", out var date) ? date.GetString() ?? "" : "";
+            var latest = await _runtime.GetLatestReleaseAsync(CancellationToken.None);
+            var hasUpdate = !string.Equals(latest.Tag, local, StringComparison.OrdinalIgnoreCase);
+            var state = string.IsNullOrWhiteSpace(local)
+                ? "尚未安装，可点「下载 / 更新」"
+                : hasUpdate ? "有更新，可点「下载 / 更新」" : "已是最新";
+            _versionInfo.Text =
+                "本地：" + (string.IsNullOrWhiteSpace(local) ? "未安装" : local) +
+                (string.IsNullOrWhiteSpace(_runtime.InstalledAt) ? "" : "（" + _runtime.InstalledAt + "）") +
+                Environment.NewLine +
+                "远程：" + latest.Tag + "    " + latest.AssetName + Environment.NewLine +
+                state;
+            _context.Ui.ShowNotification(state, hasUpdate ? PluginNotificationKind.Warning : PluginNotificationKind.Success);
         }
         catch (Exception ex)
         {
-            _versionInfo.Text = "IMCProxy-Free 检查失败：" + ex.Message;
-            _context.Ui.ShowNotification("IMCProxy-Free 更新检查失败", PluginNotificationKind.Warning);
-            return;
-        }
-
-        var state = string.CompareOrdinal(remote, local) > 0 ? "IMCProxy-Free 有更新，可点「下载 / 更新完整版」" : "IMCProxy-Free 已是最新";
-        _versionInfo.Text = "本地 IMCProxy-Free：" + (string.IsNullOrWhiteSpace(local) ? "未知（尚未下载或未运行）" : local) +
-            "    远程：" + (string.IsNullOrWhiteSpace(remote) ? "未知" : remote) + Environment.NewLine + state;
-        _context.Ui.ShowNotification(state, state.Contains("有更新") ? PluginNotificationKind.Warning : PluginNotificationKind.Success);
-    }
-
-
-    private async Task<string> ReadLocalVersionAsync()
-    {
-        try
-        {
-            var file = Path.Combine(_runtime.InstallDirectory, "version.json");
-            if (!File.Exists(file)) return "";
-            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(file));
-            return document.RootElement.TryGetProperty("editDate", out var date) ? date.GetString() ?? "" : "";
-        }
-        catch
-        {
-            return "";
+            _versionInfo.Text = "检查失败：" + ex.Message;
+            _context.Ui.ShowNotification("更新检查失败", PluginNotificationKind.Warning);
         }
     }
 
@@ -453,7 +362,7 @@ public sealed class ControlPage
                 foreach (var entry in entries)
                 {
                     if (entry is not JsonObject item) continue;
-                    builder.AppendLine($"v{item["version"]?.GetValue<string>()} ({item["date"]?.GetValue<string>()})");
+                    builder.AppendLine("v" + (item["version"]?.GetValue<string>() ?? "") + " (" + (item["date"]?.GetValue<string>() ?? "") + ")");
                     if (item["changes"] is JsonArray changes)
                     {
                         foreach (var change in changes) builder.AppendLine("  - " + change?.GetValue<string>());
@@ -471,32 +380,17 @@ public sealed class ControlPage
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-            var text = await http.GetStringAsync(ChangelogUrl);
-            _changelogBox.Text = FormatChangelog(text);
-            _context.Ui.ShowNotification("已从仓库读取更新日志", PluginNotificationKind.Info);
+            var latest = await _runtime.GetLatestReleaseAsync(CancellationToken.None);
+            _changelogBox.Text = string.IsNullOrWhiteSpace(latest.Notes)
+                ? "该 release 没有填写更新日志"
+                : latest.Notes;
+            _context.Ui.ShowNotification("已从 release 说明读取更新日志", PluginNotificationKind.Info);
         }
         catch (Exception ex)
         {
             _changelogBox.Text = "读取失败：" + ex.Message;
             _context.Ui.ShowNotification("更新日志读取失败", PluginNotificationKind.Warning);
         }
-    }
-
-    private static string FormatChangelog(string source)
-    {
-        var builder = new StringBuilder();
-        var entryPattern = new Regex(@"version:\s*""([^""]+)""\s*,\s*date:\s*""([^""]+)""\s*,\s*changes:\s*\[(.*?)\]", RegexOptions.Singleline);
-        foreach (Match entry in entryPattern.Matches(source))
-        {
-            builder.AppendLine("v" + entry.Groups[1].Value + " (" + entry.Groups[2].Value + ")");
-            foreach (Match change in Regex.Matches(entry.Groups[3].Value, "\"([^\"]+)\""))
-            {
-                builder.AppendLine("  - " + change.Groups[1].Value);
-            }
-            builder.AppendLine();
-        }
-        return builder.Length == 0 ? "没有解析到更新日志" : builder.ToString().TrimEnd();
     }
 
     private async Task RefreshAsync()
@@ -512,6 +406,7 @@ public sealed class ControlPage
                 "1.12.2 监听：" + (status["listen"]?["v1122"]?.GetValue<string>() ?? "-"),
                 "上游服务器：" + (status["upstream"]?.GetValue<string>() ?? "-"),
                 "在线玩家：" + (status["playerCount"]?.GetValue<int>().ToString() ?? "0"),
+                "安装版本：" + (string.IsNullOrWhiteSpace(_runtime.InstalledTag) ? "未安装" : _runtime.InstalledTag),
             };
             _status.Text = string.Join("\n", lines);
             _hint.Text = "安装目录：" + _runtime.InstallDirectory;
@@ -520,7 +415,7 @@ public sealed class ControlPage
         catch (Exception ex)
         {
             _status.Text = "接口未连接（" + _api.BaseUrl + "）\n" + ex.Message;
-            _hint.Text = "代理未运行时部分配置不可读。";
+            _hint.Text = "安装目录：" + _runtime.InstallDirectory;
         }
     }
 
@@ -544,7 +439,6 @@ public sealed class ControlPage
             if (item is not JsonObject setting) continue;
             var key = setting["key"]?.GetValue<string>();
             if (string.IsNullOrWhiteSpace(key)) continue;
-            var type = setting["type"]?.GetValue<string>() ?? "string";
             var value = setting["value"];
 
             var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 3, 0, 3) };
@@ -561,9 +455,9 @@ public sealed class ControlPage
 
             FrameworkElement editor;
             Func<string> readValue;
-            if (type == "boolean")
+            if (value is JsonValue jsonValue && jsonValue.TryGetValue<bool>(out var boolean))
             {
-                var check = new CheckBox { IsChecked = value?.GetValue<bool>() == true, VerticalAlignment = VerticalAlignment.Center };
+                var check = new CheckBox { IsChecked = boolean, VerticalAlignment = VerticalAlignment.Center };
                 editor = check;
                 readValue = () => check.IsChecked == true ? "true" : "false";
             }
@@ -584,7 +478,7 @@ public sealed class ControlPage
                 try
                 {
                     var result = await _api.SetSettingAsync(key, readValue());
-                    var updated = result["newValue"]?.ToString() ?? readValue();
+                    var updated = result["value"]?.ToString() ?? readValue();
                     _context.Ui.ShowNotification($"{key} = {updated}", PluginNotificationKind.Success);
                 }
                 catch (ImcProxyApiException ex)

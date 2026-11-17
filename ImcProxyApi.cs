@@ -73,8 +73,9 @@ public sealed class ImcProxyApi
     public Task<JsonNode> CommandAsync(string line, CancellationToken cancellationToken = default) =>
         PostAsync("command", new { line }, cancellationToken);
 
-    public Task<JsonNode> LogsAsync(int tail, CancellationToken cancellationToken = default) =>
-        GetAsync("logs?tail=" + Math.Clamp(tail, 1, 300), cancellationToken);
+    public Task<JsonNode> VersionAsync(CancellationToken cancellationToken = default) => GetAsync("version", cancellationToken);
+
+    public Task<JsonNode> ChangelogAsync(CancellationToken cancellationToken = default) => GetAsync("changelog", cancellationToken);
 }
 
 public sealed class ImcProxyApiException : Exception
