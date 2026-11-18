@@ -59,7 +59,7 @@ imcp-pcl-plugin/
 
 - Release 页面：https://github.com/HertaTeam/IMCProxy-NextGen-Free/releases
 - 插件优先用 GitHub API 读取最新 release；API 被限流时回退到 releases/latest 页面解析
-- 只接受 release 里的 `.zip` 资源（当前为 `imcproxy-free-<版本>-win64.zip`）
+- 优先使用 release 里的 `.exe` 资源（当前为 `imcproxy-free<yymmdd>.exe`），没有 exe 时回退 `.zip` 解压
 
 ## 控制方式
 

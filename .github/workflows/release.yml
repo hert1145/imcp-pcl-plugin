@@ -12,93 +12,119 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout plugin
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      # 只取插件 SDK，不检出整个 pcl-lite：整个仓库的 XAML 会被 SDK 工程的 WPF 目标
-      # 扫进来（宿主 UI 一起参与编译），在插件工程里必然报 MC3074。
       - name: Checkout PCL Lite SDK
         uses: actions/checkout@v4
         with:
           repository: askbbtsk/pcl-lite
           path: pcl-lite
-          sparse-checkout: |
-            PCL.Plugin.SDK
+          sparse-checkout: PCL.Plugin.SDK
           sparse-checkout-cone-mode: true
 
-      - name: Locate PCL Lite SDK
+      - name: Resolve release tag
         shell: pwsh
         run: |
-          $sdk = Join-Path $PWD "pcl-lite/PCL.Plugin.SDK"
-          if (-not (Test-Path (Join-Path $sdk "PCL.Plugin.SDK.csproj"))) {
-            throw "PCL.Plugin.SDK not found at $sdk"
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v\d') {
+            $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
+            $tag = "v$version"
+            Write-Host "manual dispatch: using plugin.json version -> $tag"
+          } else {
+            Write-Host "tag push: $tag"
           }
-          "PCL_LITE_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $pclLite = Join-Path $env:GITHUB_WORKSPACE "pcl-lite"
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PLUGIN_VERSION=$($tag -replace '^v','')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PCL_LITE_DIR=$pclLite" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Build plugin
+      - name: Build plugin outside the repo
         shell: pwsh
         run: |
-          # 把插件源码复制到仓库外的目录再编译，避免 SDK 工程里的 glob 抓到宿主 XAML。
-          $stage = Join-Path $env:RUNNER_TEMP "plugin-build"
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item "ControlPage.cs", "ImcProxyApi.cs", "ImcProxyRuntime.cs", "Plugin.cs" $stage -Force
-          Copy-Item "plugin.json" $stage -Force
-          Copy-Item "PCL.Plugin.ImcProxy.csproj" $stage -Force
-          Push-Location $stage
-          dotnet build "PCL.Plugin.ImcProxy.csproj" -c Release "-p:PclLiteDir=$env:PCL_LITE_SDK\..\"
-          if ($LASTEXITCODE -ne 0) { throw "build failed" }
-          Pop-Location
-          "PLUGIN_BUILD=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $work = Join-Path $env:RUNNER_TEMP "plugin-build"
+          if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          robocopy $env:GITHUB_WORKSPACE $work /E /XD ".git" "pcl-lite" "dist" "bin" "obj" /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+          if ($LASTEXITCODE -ge 8) { throw "copy plugin sources failed ($LASTEXITCODE)" }
+          $project = Join-Path $work "PCL.Plugin.ImcProxy.csproj"
+          dotnet build $project -c Release "-p:PclLiteDir=$env:PCL_LITE_DIR\"
+          if ($LASTEXITCODE -ne 0) { throw "dotnet build failed" }
+          "BUILD_DIR=$work" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Package .pclplugin
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if (-not $tag -or $tag -eq "main") { $tag = "v" + (Get-Content plugin.json -Raw | ConvertFrom-Json).version }
-          $dist = Join-Path $PWD "dist/imcproxy.control"
+          $work = $env:BUILD_DIR
+          $dist = Join-Path $work "dist/imcproxy.control"
           New-Item -ItemType Directory -Path $dist -Force | Out-Null
-          Copy-Item (Join-Path $env:PLUGIN_BUILD "bin/Release/net10.0-windows/PCL.Plugin.ImcProxy.dll") $dist -Force
-          Copy-Item "plugin.json" $dist -Force
-          $asset = Join-Path $PWD "dist/imcproxy.control-$tag.pclplugin"
+          Copy-Item (Join-Path $work "bin/Release/net10.0-windows/PCL.Plugin.ImcProxy.dll") $dist -Force
+          $manifestText = Get-Content (Join-Path $work "plugin.json") -Raw -Encoding UTF8 | ConvertFrom-Json | ConvertTo-Json -Depth 10
+          [System.IO.File]::WriteAllText((Join-Path $dist "plugin.json"), $manifestText, (New-Object System.Text.UTF8Encoding($false)))
+
+          $asset = Join-Path $work ("dist/imcproxy.control-" + $env:RELEASE_TAG + ".pclplugin")
           if (Test-Path $asset) { Remove-Item $asset -Force }
-          # Compress-Archive 只认 .zip，这里用 ZipFile 保留 .pclplugin 后缀
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          [System.IO.Compression.ZipFile]::CreateFromDirectory(
-            $dist, $asset, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($dist, $asset, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($asset)
+          $names = @($zip.Entries | ForEach-Object { $_.FullName })
+          $zip.Dispose()
+          if ($names.Count -ne 2 -or $names -notcontains "PCL.Plugin.ImcProxy.dll" -or $names -notcontains "plugin.json") {
+            throw "unexpected package contents: $($names -join ', ')"
+          }
+
           $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          "SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "ASSET_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PLUGIN_ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PLUGIN_SHA256=$hash" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "asset: $asset"
           Write-Host "sha256: $hash"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.ASSET_TAG }}
-          files: dist/imcproxy.control-${{ env.ASSET_TAG }}.pclplugin
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: ${{ env.PLUGIN_ASSET }}
+          overwrite_files: true
 
       - name: Summary
+        if: always()
         shell: pwsh
         run: |
-          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).version
-          @"
-          插件包：imcproxy.control-$env:ASSET_TAG.pclplugin
-          SHA-256：$env:SHA256
-          市场规模条目：
-          ```json
+          $repo = "${{ github.repository }}"
+          $tag = $env:RELEASE_TAG
+          $version = $env:PLUGIN_VERSION
+          $sha = $env:PLUGIN_SHA256
+          $json = @'
           {
             "id": "imcproxy.control",
             "name": "IMCProxy",
-            "version": "$version",
+            "version": "__VERSION__",
             "author": "IMCProxy",
-            "description": "在 PCL Lite 中下载、启动并配置 IMCProxy-NextGen-Free，通过 HTTP API 控制，不显示控制台。",
-            "packageUrl": "https://github.com/${{ github.repository }}/releases/download/$env:ASSET_TAG/imcproxy.control-$env:ASSET_TAG.pclplugin",
-            "website": "https://github.com/${{ github.repository }}",
-            "sha256": "$env:SHA256"
+            "description": "PCL Lite control panel for IMCProxy-Free: download, run hidden, edit settings.",
+            "packageUrl": "https://github.com/__REPO__/releases/download/__TAG__/imcproxy.control-__TAG__.pclplugin",
+            "website": "https://github.com/__REPO__",
+            "sha256": "__SHA__"
           }
-          ```
-          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          '@
+          $json = $json.Replace('__VERSION__', $version).Replace('__REPO__', $repo).Replace('__TAG__', $tag).Replace('__SHA__', $sha)
+          $lines = @(
+            "plugin package: imcproxy.control-$tag.pclplugin",
+            "sha256: $sha",
+            "",
+            "market index entry:",
+            '```json',
+            $json.Trim(),
+            '```'
+          )
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

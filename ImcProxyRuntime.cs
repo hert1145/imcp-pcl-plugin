@@ -42,7 +42,7 @@ public sealed class ImcProxyRuntime
 
     private string InstallInfoPath => Path.Combine(InstallDirectory, ".install.json");
 
-    public sealed record ReleaseAsset(string Tag, string AssetName, string DownloadUrl, string Notes);
+    public sealed record ReleaseAsset(string Tag, string AssetName, string DownloadUrl, string Notes, bool IsExecutable);
 
     public bool HasInstallation() => File.Exists(ExecutablePath);
 
@@ -79,16 +79,20 @@ public sealed class ImcProxyRuntime
         var notes = root.TryGetProperty("body", out var bodyNode) ? bodyNode.GetString() ?? "" : "";
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
         {
+            ReleaseAsset? zipFallback = null;
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var nameNode) ? nameNode.GetString() ?? "" : "";
-                if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
                 var url = asset.TryGetProperty("browser_download_url", out var urlNode) ? urlNode.GetString() ?? "" : "";
                 if (url.Length == 0) continue;
-                return new ReleaseAsset(tag, name, url, notes);
+                if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    return new ReleaseAsset(tag, name, url, notes, true);
+                if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && zipFallback is null)
+                    zipFallback = new ReleaseAsset(tag, name, url, notes, false);
             }
+            if (zipFallback is not null) return zipFallback;
         }
-        throw new InvalidOperationException("最新 release 里没有 zip 资源");
+        throw new InvalidOperationException("最新 release 里没有 exe 或 zip 资源");
     }
 
     private static async Task<ReleaseAsset> GetLatestFromHtmlAsync(CancellationToken cancellationToken)
@@ -103,22 +107,30 @@ public sealed class ImcProxyRuntime
         if (tag.Length == 0) throw new InvalidOperationException("无法确定最新 release 的 tag");
 
         var html = await http.GetStringAsync($"https://github.com/{RepoOwner}/{RepoName}/releases/expanded_assets/{tag}", cancellationToken);
-        var match = Regex.Match(html, "/releases/download/[^\"'\\s]+?\\.zip");
-        if (!match.Success) throw new InvalidOperationException("最新 release 页面里没有 zip 资源");
+        var match = Regex.Match(html, "/releases/download/[^\"'\\s]+?\\.(exe|zip)", RegexOptions.IgnoreCase);
+        if (!match.Success) throw new InvalidOperationException("最新 release 页面里没有 exe 或 zip 资源");
         var path = match.Value;
         var assetName = path[(path.LastIndexOf('/') + 1)..];
         var url = "https://github.com" + path;
-        return new ReleaseAsset(tag, assetName, url, "");
+        var executable = assetName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+        return new ReleaseAsset(tag, assetName, url, "", executable);
     }
 
     public async Task DownloadAsync(IProgress<PluginDownloadProgress>? progress, CancellationToken cancellationToken)
     {
         var release = await GetLatestReleaseAsync(cancellationToken);
-        var tempZip = Path.Combine(Path.GetTempPath(), "imcproxy-" + Guid.NewGuid().ToString("n") + ".zip");
+        await StopAsync(CancellationToken.None);
+
+        var suffix = release.IsExecutable ? ".exe" : ".zip";
+        var relative = "downloads/imcproxy-" + Guid.NewGuid().ToString("n") + suffix;
+        var local = Path.Combine(_context.DataDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
         try
         {
-            await _context.Launcher.DownloadAsync(new Uri(release.DownloadUrl), tempZip, progress, cancellationToken);
-            await ExtractAsync(tempZip, cancellationToken);
+            await _context.Launcher.DownloadAsync(new Uri(release.DownloadUrl), relative, progress, cancellationToken);
+            if (release.IsExecutable)
+                await InstallExecutableAsync(local, cancellationToken);
+            else
+                await ExtractAsync(local, cancellationToken);
             _installedTag = release.Tag;
             _installedAsset = release.AssetName;
             _installedAt = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -126,8 +138,36 @@ public sealed class ImcProxyRuntime
         }
         finally
         {
-            if (File.Exists(tempZip)) File.Delete(tempZip);
+            if (File.Exists(local)) File.Delete(local);
         }
+    }
+
+    private async Task InstallExecutableAsync(string downloadPath, CancellationToken cancellationToken)
+    {
+        var info = new FileInfo(downloadPath);
+        if (info.Length < 100_000)
+            throw new InvalidDataException("下载的可执行文件体积异常（" + info.Length + " 字节）");
+        await using (var probe = File.OpenRead(downloadPath))
+        {
+            var header = new byte[2];
+            if (await probe.ReadAsync(header.AsMemory(0, 2), cancellationToken) != 2 ||
+                header[0] != (byte)'M' || header[1] != (byte)'Z')
+                throw new InvalidDataException("下载的文件不是有效的 Windows 可执行文件");
+        }
+
+        Directory.CreateDirectory(InstallDirectory);
+        Directory.CreateDirectory(Path.Combine(InstallDirectory, "logs"));
+
+        var target = ExecutablePath;
+        if (File.Exists(target))
+        {
+            try { File.SetAttributes(target, FileAttributes.Normal); } catch { }
+            File.Delete(target);
+        }
+        await using var source = File.OpenRead(downloadPath);
+        await using var destination = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None,
+            81920, FileOptions.Asynchronous);
+        await source.CopyToAsync(destination, cancellationToken);
     }
 
     private static readonly string[] PreservedFiles =

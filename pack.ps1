@@ -1,6 +1,6 @@
-param(
+﻿param(
     [string]$Tag = "v1.0.0",
-    [string]$Owner = "HertaTeam",
+    [string]$Owner = "hert1145",
     [string]$Repo = "imcp-pcl-plugin",
     [string]$PclLiteDir = $env:PCL_LITE_DIR
 )
@@ -23,7 +23,8 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 $dist = Join-Path $root "dist\imcproxy.control"
 Copy-Item (Join-Path $root "bin\Release\net10.0-windows\PCL.Plugin.ImcProxy.dll") $dist -Force
-Copy-Item (Join-Path $root "plugin.json") $dist -Force
+$manifestText = Get-Content (Join-Path $root "plugin.json") -Raw -Encoding UTF8 | ConvertFrom-Json | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText((Join-Path $dist "plugin.json"), $manifestText, (New-Object System.Text.UTF8Encoding($false)))
 
 $assetName = "imcproxy.control-$Tag.pclplugin"
 $package = Join-Path $root "dist\$assetName"
